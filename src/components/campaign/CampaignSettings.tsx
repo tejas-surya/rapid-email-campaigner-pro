@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
@@ -6,7 +5,7 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { InfoCircle, Settings } from 'lucide-react';
+import { Info, Settings } from 'lucide-react';
 import {
   Tooltip,
   TooltipContent,
@@ -76,7 +75,7 @@ const CampaignSettings: React.FC<CampaignSettingsProps> = ({ onSettingsChange })
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <InfoCircle className="h-4 w-4 text-gray-400" />
+                      <Info className="h-4 w-4 text-gray-400" />
                     </TooltipTrigger>
                     <TooltipContent>
                       <p>Number of emails sent before a pause</p>
@@ -108,7 +107,7 @@ const CampaignSettings: React.FC<CampaignSettingsProps> = ({ onSettingsChange })
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <InfoCircle className="h-4 w-4 text-gray-400" />
+                      <Info className="h-4 w-4 text-gray-400" />
                     </TooltipTrigger>
                     <TooltipContent>
                       <p>Time to wait after sending a batch of emails</p>
@@ -139,7 +138,7 @@ const CampaignSettings: React.FC<CampaignSettingsProps> = ({ onSettingsChange })
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <InfoCircle className="h-4 w-4 text-gray-400" />
+                      <Info className="h-4 w-4 text-gray-400" />
                     </TooltipTrigger>
                     <TooltipContent>
                       <p>Time to wait between individual emails in a batch</p>
