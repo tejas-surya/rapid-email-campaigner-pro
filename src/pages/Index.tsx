@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import Header from '@/components/layout/Header';
 import AccountSelector from '@/components/accounts/AccountSelector';
@@ -12,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { toast } from '@/components/ui/use-toast';
 import { ArrowLeft, ArrowRight, RefreshCcw } from 'lucide-react';
+import { sendEmail } from '@/services/gmailApi';
 
 // Define the steps for our setup process
 const steps: Step[] = [
@@ -129,16 +129,130 @@ const Index = () => {
       subject: emailData.subject,
       body: emailData.body,
       attachmentsCount: emailData.attachments.length,
+      attachments: emailData.attachments,
     },
     recipients: {
       total: recipients.length,
       valid: recipients.filter(r => r.valid).length,
       invalid: recipients.filter(r => !r.valid).length,
+      emails: recipients.filter(r => r.valid).map(r => r.email),
     },
     settings: campaignSettings,
   };
   
-  // Handlers for campaign control
+  // Function to actually send emails
+  const sendRealEmails = async () => {
+    // Find the next batch of pending emails
+    const pendingEmails = emailLogs.filter(log => log.status === 'pending');
+    
+    if (pendingEmails.length === 0) {
+      // All emails are processed
+      setIsRunning(false);
+      toast({
+        title: "Campaign Completed",
+        description: "All emails have been processed.",
+      });
+      return;
+    }
+    
+    // Take the next batch
+    const currentBatchEmails = pendingEmails.slice(0, campaignSettings.batchSize);
+    
+    // Mark them as sending
+    const updatedLogs = [...emailLogs];
+    
+    currentBatchEmails.forEach(email => {
+      const index = updatedLogs.findIndex(log => log.id === email.id);
+      if (index !== -1) {
+        updatedLogs[index] = {
+          ...updatedLogs[index],
+          status: 'sending',
+        };
+      }
+    });
+    
+    setEmailLogs(updatedLogs);
+    
+    // Process each email in the batch
+    let emailIndex = 0;
+    
+    const processEmail = async () => {
+      if (emailIndex >= currentBatchEmails.length || !isRunning) {
+        // Batch completed or campaign paused
+        if (isRunning) {
+          // If we're still running, schedule the next batch
+          setTimeout(() => {
+            setCurrentBatch(prev => prev + 1);
+            sendRealEmails();
+          }, campaignSettings.delayBetweenBatches * 1000);
+        }
+        return;
+      }
+      
+      const email = currentBatchEmails[emailIndex];
+      const recipientEmail = email.email;
+      
+      try {
+        // Actually send the email using Gmail API
+        const result = await sendEmail(
+          recipientEmail,
+          emailData.subject,
+          emailData.body,
+          account?.email || "",
+          emailData.attachments
+        );
+        
+        const updatedLogs = [...emailLogs];
+        const index = updatedLogs.findIndex(log => log.id === email.id);
+        
+        if (index !== -1) {
+          updatedLogs[index] = {
+            ...updatedLogs[index],
+            status: result.success ? 'sent' : 'failed',
+            timestamp: new Date(),
+            errorMessage: result.error,
+          };
+        }
+        
+        setEmailLogs(updatedLogs);
+        emailIndex++;
+        
+        // Schedule the next email
+        setTimeout(() => {
+          processEmail();
+        }, campaignSettings.delayBetweenEmails * 1000);
+      } catch (error) {
+        console.error("Error sending email:", error);
+        
+        const updatedLogs = [...emailLogs];
+        const index = updatedLogs.findIndex(log => log.id === email.id);
+        
+        if (index !== -1) {
+          updatedLogs[index] = {
+            ...updatedLogs[index],
+            status: 'failed',
+            timestamp: new Date(),
+            errorMessage: error instanceof Error ? error.message : "Unknown error",
+          };
+        }
+        
+        setEmailLogs(updatedLogs);
+        emailIndex++;
+        
+        // Schedule the next email
+        setTimeout(() => {
+          processEmail();
+        }, campaignSettings.delayBetweenEmails * 1000);
+      }
+    };
+    
+    processEmail();
+  };
+  
+  // Replace the simulateSending function with the real one
+  const simulateSending = sendRealEmails;
+  
+  // Modify your startCampaign function to handle Gmail authentication check
   const startCampaign = () => {
     if (!account) {
       toast({
@@ -183,11 +297,11 @@ const Index = () => {
         : "Your email campaign has been started. Emails will be sent in batches.",
     });
     
-    // In a real extension, this would trigger the actual sending process
-    // For this demo, we'll simulate the sending process
-    simulateSending();
+    // Start sending emails
+    sendRealEmails();
   };
   
+  // Handlers for campaign control
   const pauseCampaign = () => {
     setIsRunning(false);
     setIsPaused(true);
@@ -219,82 +333,6 @@ const Index = () => {
       title: "Campaign Reset",
       description: "Your email campaign has been reset. You can start it again.",
     });
-  };
-  
-  // Function to simulate sending emails
-  const simulateSending = () => {
-    // Find the next batch of pending emails
-    const pendingEmails = emailLogs.filter(log => log.status === 'pending');
-    
-    if (pendingEmails.length === 0) {
-      // All emails are processed
-      setIsRunning(false);
-      toast({
-        title: "Campaign Completed",
-        description: "All emails have been processed.",
-      });
-      return;
-    }
-    
-    // Take the next batch
-    const currentBatchEmails = pendingEmails.slice(0, campaignSettings.batchSize);
-    
-    // Mark them as sending
-    const updatedLogs = [...emailLogs];
-    
-    currentBatchEmails.forEach(email => {
-      const index = updatedLogs.findIndex(log => log.id === email.id);
-      if (index !== -1) {
-        updatedLogs[index] = {
-          ...updatedLogs[index],
-          status: 'sending',
-        };
-      }
-    });
-    
-    setEmailLogs(updatedLogs);
-    
-    // Process each email in the batch
-    let emailIndex = 0;
-    
-    const processEmail = () => {
-      if (emailIndex >= currentBatchEmails.length || !isRunning) {
-        // Batch completed or campaign paused
-        if (isRunning) {
-          // If we're still running, schedule the next batch
-          setTimeout(() => {
-            setCurrentBatch(prev => prev + 1);
-            simulateSending();
-          }, campaignSettings.delayBetweenBatches * 1000);
-        }
-        return;
-      }
-      
-      const email = currentBatchEmails[emailIndex];
-      
-      // Simulate success/failure (90% success rate)
-      const isSuccess = Math.random() < 0.9;
-      
-      setTimeout(() => {
-        const updatedLogs = [...emailLogs];
-        const index = updatedLogs.findIndex(log => log.id === email.id);
-        
-        if (index !== -1) {
-          updatedLogs[index] = {
-            ...updatedLogs[index],
-            status: isSuccess ? 'sent' : 'failed',
-            timestamp: new Date(),
-            errorMessage: isSuccess ? undefined : 'Simulated failure',
-          };
-        }
-        
-        setEmailLogs(updatedLogs);
-        emailIndex++;
-        processEmail();
-      }, campaignSettings.delayBetweenEmails * 1000);
-    };
-    
-    processEmail();
   };
   
   // Check if we can proceed to the next step

@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, Mail, ChevronDown, UserCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -9,12 +9,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-
-// Mock data - in real implementation this would come from Gmail API/OAuth
-const mockAccounts = [
-  { id: '1', email: 'demo@gmail.com', name: 'Demo Account' },
-  { id: '2', email: 'test@gmail.com', name: 'Test Account' },
-];
+import { authorizeWithGmail, hasValidToken, clearAccessToken } from '@/services/gmailApi';
+import { toast } from '@/components/ui/use-toast';
 
 type Account = {
   id: string;
@@ -32,10 +28,96 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
   onSelectAccount 
 }) => {
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
+  const [connectedAccounts, setConnectedAccounts] = useState<Account[]>([]);
+
+  // Load connected accounts on component mount
+  useEffect(() => {
+    const loadAccounts = () => {
+      const savedAccounts = localStorage.getItem('gmail_accounts');
+      if (savedAccounts) {
+        try {
+          const accounts = JSON.parse(savedAccounts);
+          setConnectedAccounts(accounts);
+          
+          // If we have a previously selected account, select it again
+          const lastSelected = localStorage.getItem('last_selected_account');
+          if (lastSelected) {
+            const account = accounts.find((acc: Account) => acc.id === lastSelected);
+            if (account) {
+              setSelectedAccount(account);
+              onSelectAccount(account);
+            }
+          }
+        } catch (e) {
+          console.error("Error loading accounts:", e);
+        }
+      }
+    };
+    
+    loadAccounts();
+  }, [onSelectAccount]);
 
   const handleAccountSelect = (account: Account) => {
     setSelectedAccount(account);
+    localStorage.setItem('last_selected_account', account.id);
     onSelectAccount(account);
+  };
+
+  const handleAddAccount = async () => {
+    // Call the provided onAddAccount callback
+    onAddAccount();
+    
+    // Start the Gmail OAuth flow
+    authorizeWithGmail();
+    
+    // In a real extension, you would get the user info after auth
+    // For this demo, we'll simulate it with a timeout
+    setTimeout(() => {
+      if (hasValidToken()) {
+        // In a real app, you would fetch user info from Gmail API
+        const newAccount = {
+          id: `gmail_${Date.now()}`,
+          email: `user${Math.floor(Math.random() * 1000)}@gmail.com`,
+          name: 'Gmail User',
+        };
+        
+        // Save the new account
+        const updatedAccounts = [...connectedAccounts, newAccount];
+        setConnectedAccounts(updatedAccounts);
+        localStorage.setItem('gmail_accounts', JSON.stringify(updatedAccounts));
+        
+        // Select the new account
+        handleAccountSelect(newAccount);
+        
+        toast({
+          title: "Account Added",
+          description: `Successfully added ${newAccount.email}`,
+        });
+      }
+    }, 1000);
+  };
+
+  const handleRemoveAccount = (accountId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    const updatedAccounts = connectedAccounts.filter(account => account.id !== accountId);
+    setConnectedAccounts(updatedAccounts);
+    localStorage.setItem('gmail_accounts', JSON.stringify(updatedAccounts));
+    
+    if (selectedAccount?.id === accountId) {
+      setSelectedAccount(null);
+      localStorage.removeItem('last_selected_account');
+    }
+    
+    // If this was the last account, clear the access token
+    if (updatedAccounts.length === 0) {
+      clearAccessToken();
+    }
+    
+    toast({
+      title: "Account Removed",
+      description: "The account has been removed",
+    });
   };
 
   return (
@@ -68,18 +150,29 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-64">
-            {mockAccounts.map((account) => (
+            {connectedAccounts.map((account) => (
               <DropdownMenuItem 
                 key={account.id}
                 onClick={() => handleAccountSelect(account)}
-                className="flex items-center gap-2"
+                className="flex items-center gap-2 justify-between"
               >
-                <Mail className="h-4 w-4 text-gmail-primary" />
-                <span className="truncate flex-1">{account.email}</span>
+                <div className="flex items-center gap-2 truncate">
+                  <Mail className="h-4 w-4 text-gmail-primary" />
+                  <span className="truncate">{account.email}</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 rounded-full"
+                  onClick={(e) => handleRemoveAccount(account.id, e)}
+                >
+                  <span className="sr-only">Remove</span>
+                  <span aria-hidden="true">&times;</span>
+                </Button>
               </DropdownMenuItem>
             ))}
             <DropdownMenuItem 
-              onClick={onAddAccount}
+              onClick={handleAddAccount}
               className="flex items-center gap-2 text-blue-600 hover:text-blue-800"
             >
               <Plus className="h-4 w-4" />
@@ -88,7 +181,7 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
           </DropdownMenuContent>
         </DropdownMenu>
         <Button 
-          onClick={onAddAccount}
+          onClick={handleAddAccount}
           variant="outline"
           size="icon"
           className="flex-shrink-0"

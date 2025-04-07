@@ -15,11 +15,13 @@ export interface CampaignData {
     subject: string;
     body: string;
     attachmentsCount: number;
+    attachments: File[];
   };
   recipients: {
     total: number;
     valid: number;
     invalid: number;
+    emails: string[];
   };
   settings: CampaignSettingsData;
 }
