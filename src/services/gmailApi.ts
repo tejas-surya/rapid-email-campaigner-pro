@@ -41,56 +41,25 @@ export const hasValidToken = (): boolean => {
 export const authorizeWithGmail = () => {
   // Define OAuth 2.0 parameters
   const clientId = "YOUR_GOOGLE_CLOUD_CLIENT_ID"; // You need to replace this with your client ID
-  const redirectUri = chrome.identity ? chrome.identity.getRedirectURL() : `${window.location.origin}/oauth-callback`;
+  const redirectUri = `${window.location.origin}/oauth-callback`;
   const scope = "https://www.googleapis.com/auth/gmail.send";
   
   // Build the OAuth URL
   const authUrl = `https://accounts.google.com/o/oauth2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=${encodeURIComponent(scope)}`;
   
-  // Use Chrome identity API if available (when running as an extension)
-  if (chrome.identity) {
-    chrome.identity.launchWebAuthFlow(
-      { url: authUrl, interactive: true },
-      (responseUrl) => {
-        if (chrome.runtime.lastError) {
-          toast({
-            title: "Authentication Error",
-            description: chrome.runtime.lastError.message,
-            variant: "destructive",
-          });
-          return;
-        }
-        
-        // Extract the access token from the response URL
-        const accessToken = new URLSearchParams(
-          responseUrl.split("#")[1]
-        ).get("access_token");
-        
-        if (accessToken) {
-          setAccessToken(accessToken);
-          toast({
-            title: "Authentication Success",
-            description: "Successfully connected to Gmail!",
-          });
-        }
-      }
-    );
-  } else {
-    // For non-extension environment (development)
-    window.open(authUrl, "_blank", "width=600,height=700");
-    
-    // This is a simplified approach. In a real implementation, you'd need
-    // a proper callback page to handle the OAuth response
-    window.addEventListener("message", (event) => {
-      if (event.data.type === "oauth-response" && event.data.accessToken) {
-        setAccessToken(event.data.accessToken);
-        toast({
-          title: "Authentication Success",
-          description: "Successfully connected to Gmail!",
-        });
-      }
-    });
-  }
+  // For development/browser environment
+  window.open(authUrl, "_blank", "width=600,height=700");
+  
+  // Listen for the OAuth callback
+  window.addEventListener("message", (event) => {
+    if (event.data.type === "oauth-response" && event.data.accessToken) {
+      setAccessToken(event.data.accessToken);
+      toast({
+        title: "Authentication Success",
+        description: "Successfully connected to Gmail!",
+      });
+    }
+  });
 };
 
 // Helper to convert a string to base64url format
@@ -171,7 +140,76 @@ const constructMimeMessage = (
   });
 };
 
-// Send an email using Gmail API
+// Function to send an email to multiple recipients (up to 500) in one message
+export const sendBulkEmail = async (
+  recipients: string[],
+  subject: string,
+  body: string,
+  from: string,
+  attachments: File[] = []
+): Promise<GmailApiResponse> => {
+  const token = getAccessToken();
+  
+  if (!token) {
+    return {
+      success: false,
+      error: "Not authenticated. Please connect your Gmail account."
+    };
+  }
+  
+  // Gmail allows up to 500 recipients per email
+  const maxRecipientsPerEmail = 500;
+  
+  if (recipients.length > maxRecipientsPerEmail) {
+    return {
+      success: false,
+      error: `Too many recipients. Gmail allows maximum ${maxRecipientsPerEmail} recipients per email.`
+    };
+  }
+  
+  try {
+    // Combine all recipients in a comma-separated string
+    const toField = recipients.join(', ');
+    
+    // Construct the email MIME message
+    const mimeMessage = await constructMimeMessage(toField, subject, body, from, attachments);
+    
+    // Send the email using Gmail API
+    const response = await fetch('https://www.googleapis.com/gmail/v1/users/me/messages/send', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        raw: mimeMessage
+      })
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      return {
+        success: false,
+        error: errorData.error?.message || "Failed to send email"
+      };
+    }
+    
+    const responseData = await response.json();
+    
+    return {
+      success: true,
+      threadId: responseData.threadId
+    };
+  } catch (error) {
+    console.error("Error sending bulk email:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error occurred"
+    };
+  }
+};
+
+// Send an email using Gmail API (to a single recipient)
 export const sendEmail = async (
   to: string,
   subject: string,

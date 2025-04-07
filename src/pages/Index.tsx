@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import Header from '@/components/layout/Header';
 import AccountSelector from '@/components/accounts/AccountSelector';
@@ -11,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { toast } from '@/components/ui/use-toast';
 import { ArrowLeft, ArrowRight, RefreshCcw } from 'lucide-react';
-import { sendEmail } from '@/services/gmailApi';
+import { sendEmail, sendBulkEmail } from '@/services/gmailApi';
 
 // Define the steps for our setup process
 const steps: Step[] = [
@@ -69,8 +70,15 @@ const Index = () => {
   // State for email logs
   const [emailLogs, setEmailLogs] = useState<EmailLog[]>([]);
   
-  // Calculate total batches
-  const totalBatches = Math.ceil(recipients.filter(r => r.valid).length / campaignSettings.batchSize);
+  // Calculate total batches - each batch can have up to 500 recipients for Gmail
+  const validRecipients = recipients.filter(r => r.valid).map(r => r.email);
+  
+  // If each email can have 500 recipients, calculate how many emails (batches) we need to send
+  const maxRecipientsPerEmail = 500;
+  const totalEmailsNeeded = Math.ceil(validRecipients.length / maxRecipientsPerEmail);
+  
+  // Then calculate how many batches of those emails based on campaign settings
+  const totalBatches = Math.ceil(totalEmailsNeeded / campaignSettings.batchSize);
   
   // Handler for when an account is selected
   const handleAccountSelect = (selectedAccount: { id: string; email: string; name: string }) => {
@@ -140,12 +148,17 @@ const Index = () => {
     settings: campaignSettings,
   };
   
-  // Function to actually send emails
+  // Function to actually send emails in batches of up to 500 recipients
   const sendRealEmails = async () => {
-    // Find the next batch of pending emails
-    const pendingEmails = emailLogs.filter(log => log.status === 'pending');
+    if (!isRunning) return;
     
-    if (pendingEmails.length === 0) {
+    // Get all valid recipients
+    const validRecipients = recipients.filter(r => r.valid).map(r => r.email);
+    
+    // Find all pending emails in the logs
+    const pendingLogs = emailLogs.filter(log => log.status === 'pending');
+    
+    if (pendingLogs.length === 0) {
       // All emails are processed
       setIsRunning(false);
       toast({
@@ -155,13 +168,13 @@ const Index = () => {
       return;
     }
     
-    // Take the next batch
-    const currentBatchEmails = pendingEmails.slice(0, campaignSettings.batchSize);
+    // Take the next batch of emails based on campaign settings
+    const currentBatchSize = Math.min(campaignSettings.batchSize, pendingLogs.length);
+    const currentBatchLogs = pendingLogs.slice(0, currentBatchSize);
     
-    // Mark them as sending
+    // Mark these batches as sending
     const updatedLogs = [...emailLogs];
-    
-    currentBatchEmails.forEach(email => {
+    currentBatchLogs.forEach(email => {
       const index = updatedLogs.findIndex(log => log.id === email.id);
       if (index !== -1) {
         updatedLogs[index] = {
@@ -173,86 +186,90 @@ const Index = () => {
     
     setEmailLogs(updatedLogs);
     
-    // Process each email in the batch
-    let emailIndex = 0;
-    
-    const processEmail = async () => {
-      if (emailIndex >= currentBatchEmails.length || !isRunning) {
-        // Batch completed or campaign paused
-        if (isRunning) {
-          // If we're still running, schedule the next batch
-          setTimeout(() => {
-            setCurrentBatch(prev => prev + 1);
-            sendRealEmails();
-          }, campaignSettings.delayBetweenBatches * 1000);
-        }
-        return;
-      }
+    // Process each email batch (up to 500 recipients at once)
+    for (let i = 0; i < currentBatchLogs.length; i++) {
+      if (!isRunning) break; // Stop if campaign was paused
       
-      const email = currentBatchEmails[emailIndex];
-      const recipientEmail = email.email;
+      const emailLog = currentBatchLogs[i];
+      const startIndex = parseInt(emailLog.id.split('-')[1]) * maxRecipientsPerEmail;
+      const endIndex = Math.min(startIndex + maxRecipientsPerEmail, validRecipients.length);
+      const batchRecipients = validRecipients.slice(startIndex, endIndex);
       
       try {
-        // Actually send the email using Gmail API
-        const result = await sendEmail(
-          recipientEmail,
-          emailData.subject,
-          emailData.body,
-          account?.email || "",
-          emailData.attachments
-        );
+        let result;
         
-        const updatedLogs = [...emailLogs];
-        const index = updatedLogs.findIndex(log => log.id === email.id);
+        if (batchRecipients.length > 1) {
+          // Send to multiple recipients (up to 500)
+          result = await sendBulkEmail(
+            batchRecipients,
+            emailData.subject,
+            emailData.body,
+            account?.email || "",
+            emailData.attachments
+          );
+        } else if (batchRecipients.length === 1) {
+          // Send to a single recipient
+          result = await sendEmail(
+            batchRecipients[0],
+            emailData.subject,
+            emailData.body,
+            account?.email || "",
+            emailData.attachments
+          );
+        } else {
+          // No recipients in this batch (shouldn't happen normally)
+          continue;
+        }
         
-        if (index !== -1) {
-          updatedLogs[index] = {
-            ...updatedLogs[index],
+        // Update the log for this batch
+        const newLogs = [...emailLogs];
+        const logIndex = newLogs.findIndex(log => log.id === emailLog.id);
+        
+        if (logIndex !== -1) {
+          newLogs[logIndex] = {
+            ...newLogs[logIndex],
             status: result.success ? 'sent' : 'failed',
             timestamp: new Date(),
             errorMessage: result.error,
           };
         }
         
-        setEmailLogs(updatedLogs);
-        emailIndex++;
+        setEmailLogs(newLogs);
         
-        // Schedule the next email
-        setTimeout(() => {
-          processEmail();
-        }, campaignSettings.delayBetweenEmails * 1000);
+        // Delay between emails in a batch
+        if (i < currentBatchLogs.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, campaignSettings.delayBetweenEmails * 1000));
+        }
       } catch (error) {
-        console.error("Error sending email:", error);
+        console.error("Error sending batch:", error);
         
-        const updatedLogs = [...emailLogs];
-        const index = updatedLogs.findIndex(log => log.id === email.id);
+        // Update the log for this batch
+        const newLogs = [...emailLogs];
+        const logIndex = newLogs.findIndex(log => log.id === emailLog.id);
         
-        if (index !== -1) {
-          updatedLogs[index] = {
-            ...updatedLogs[index],
+        if (logIndex !== -1) {
+          newLogs[logIndex] = {
+            ...newLogs[logIndex],
             status: 'failed',
             timestamp: new Date(),
             errorMessage: error instanceof Error ? error.message : "Unknown error",
           };
         }
         
-        setEmailLogs(updatedLogs);
-        emailIndex++;
-        
-        // Schedule the next email
-        setTimeout(() => {
-          processEmail();
-        }, campaignSettings.delayBetweenEmails * 1000);
+        setEmailLogs(newLogs);
       }
-    };
+    }
     
-    processEmail();
+    // If campaign is still running, schedule the next batch
+    if (isRunning) {
+      setCurrentBatch(prev => prev + 1);
+      setTimeout(() => {
+        sendRealEmails();
+      }, campaignSettings.delayBetweenBatches * 1000);
+    }
   };
   
-  // Replace the simulateSending function with the real one
-  const simulateSending = sendRealEmails;
-  
-  // Modify your startCampaign function to handle Gmail authentication check
+  // Start the campaign
   const startCampaign = () => {
     if (!account) {
       toast({
@@ -274,13 +291,15 @@ const Index = () => {
     
     // If it's a fresh start, initialize logs
     if (!isPaused) {
-      const logs: EmailLog[] = recipients
-        .filter(r => r.valid)
-        .map((recipient, index) => ({
-          id: `email-${index}`,
-          email: recipient.email,
-          status: 'pending' as const,
-        }));
+      // For each batch of 500 recipients, create one log entry
+      const validRecipients = recipients.filter(r => r.valid).map(r => r.email);
+      const totalBatches = Math.ceil(validRecipients.length / maxRecipientsPerEmail);
+      
+      const logs: EmailLog[] = Array.from({ length: totalBatches }, (_, index) => ({
+        id: `batch-${index}`,
+        email: `Batch ${index + 1} (${Math.min(maxRecipientsPerEmail, validRecipients.length - index * maxRecipientsPerEmail)} recipients)`,
+        status: 'pending' as const,
+      }));
       
       setEmailLogs(logs);
       setStartTime(new Date());

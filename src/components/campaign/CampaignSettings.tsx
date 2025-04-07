@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
@@ -28,7 +29,7 @@ export interface CampaignSettingsData {
 
 const CampaignSettings: React.FC<CampaignSettingsProps> = ({ onSettingsChange }) => {
   const [settings, setSettings] = useState<CampaignSettingsData>({
-    batchSize: 10,
+    batchSize: 10, // This is now the number of 500-recipient emails to send in one batch
     delayBetweenBatches: 60,
     delayBetweenEmails: 3,
     retryFailedEmails: true,
@@ -70,7 +71,7 @@ const CampaignSettings: React.FC<CampaignSettingsProps> = ({ onSettingsChange })
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <label className="text-sm font-medium text-gray-700">
-                  Emails per batch
+                  Batch size (500-recipient emails per batch)
                 </label>
                 <TooltipProvider>
                   <Tooltip>
@@ -78,7 +79,7 @@ const CampaignSettings: React.FC<CampaignSettingsProps> = ({ onSettingsChange })
                       <Info className="h-4 w-4 text-gray-400" />
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>Number of emails sent before a pause</p>
+                      <p>Number of emails (each with up to 500 recipients) sent before a pause</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -94,7 +95,7 @@ const CampaignSettings: React.FC<CampaignSettingsProps> = ({ onSettingsChange })
               className="w-full"
             />
             <p className="text-xs text-gray-500">
-              Gmail's limit is approximately 500 emails per day. Use smaller batches to avoid hitting rate limits.
+              Gmail processes emails in batches of up to 500 recipients. This setting controls how many such batches to send before pausing.
             </p>
           </div>
           
