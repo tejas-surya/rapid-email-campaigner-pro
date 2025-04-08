@@ -12,6 +12,9 @@
       "128": "icons/icon128.png"
     }
   },
+  "background": {
+    "service_worker": "background.js"
+  },
   "permissions": [
     "identity",
     "storage"
@@ -23,5 +26,8 @@
   "oauth2": {
     "client_id": "YOUR_GOOGLE_CLOUD_CLIENT_ID",
     "scopes": ["https://www.googleapis.com/auth/gmail.send"]
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
   }
 }
